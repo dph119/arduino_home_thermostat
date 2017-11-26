@@ -28,7 +28,7 @@ connected via ESP8266
     7. One (1) 12V/3A DC Power Adaptor (for the Stepper Motor)
     8. One (1) Stepper Motor Driver
         1. I used a [SEPP MTD-01](https://www.rpelectronics.com/mtd-01.html)
-    9. Two (2) Enclosure boxes (one for each Arduino)
+    9. Two (2) Enclosure boxes (for each Arduino)
     10. Misc. mounting equipment for both the motor and enclosure. Not going into it here.
 
 ## Organization
@@ -64,14 +64,14 @@ connected via ESP8266
 
     Current supported commands:
 
-    Command | Variable(s) | Description
-    ------- |------------ | -----------
-    /rtherm | (none) | Reset the thermostat
-    /stherm | value | Set the thermostat to some specified value
-    /sdtemp | value | Set the 'desired' temperature to regulate toward
-    /enable | (none) | Enable the whole setup
-    /disable | (none) | Disable the whole setup
-    / | (none) | Simply serves up a summary of everything.
+Command | Variable(s) | Description
+--- | --- | ---
+/rtherm | (none) | Reset the thermostat
+/stherm | value | Set the thermostat to some specified value
+/sdtemp | value | Set the 'desired' temperature to regulate toward
+/enable | (none) | Enable the whole setup
+/disable | (none) | Disable the whole setup
+/ | (none) | Simply serves up a summary of everything.
 
     All of the commands will return an updated value.
 
@@ -157,17 +157,18 @@ connected via ESP8266
     In the worst case, the thermostat is unnecessarily turned all the way to the lowest temperature.
     
 ## Useful References
-    [The actual ESP8266 library code, which has very useful examples](https://github.com/esp8266/Arduino)
-    [ESP8266 Library Documentation is pretty good](http://arduino-esp8266.readthedocs.io/en/latest/index.html)
-    [A tutorial on getting query parameters](https://techtutorialsx.com/2016/10/22/esp8266-webserver-getting-query-parameters/)
-    [A tutorial on inter-ESP8266 communication](http://www.microcontroller-project.com/esp8266-inter-communication-using-arduino-ide.html)
-    [A note on ESP8266 boot mode selection](https://github.com/espressif/esptool/wiki/ESP8266-Boot-Mode-Selection)
+[The actual ESP8266 library code, which has very useful examples](https://github.com/esp8266/Arduino)
+    
+[ESP8266 Library Documentation is pretty good](http://arduino-esp8266.readthedocs.io/en/latest/index.html)
+
+[A tutorial on getting query parameters](https://techtutorialsx.com/2016/10/22/esp8266-webserver-getting-query-parameters/)
+
+[A tutorial on inter-ESP8266 communication](http://www.microcontroller-project.com/esp8266-inter-communication-using-arduino-ide.html)
+
+[A note on ESP8266 boot mode selection](https://github.com/espressif/esptool/wiki/ESP8266-Boot-Mode-Selection)
+        
         Not all of it applied in my case, though.
-    [ESP8266 AT Command Reference](https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/)
+
+[ESP8266 AT Command Reference](https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/)
+        
         I reprogrammed my ESP8266 and so didn't use this, but good for getting a little more insight into what it can do.
-    
-    
-    
-    
-   
-    
