@@ -2,9 +2,6 @@
 #include <Wire.h>
 
 SFE_BMP180 temperature;
-
-const byte numChars = 8;
-char query_char_buffer[numChars]; // an array to store the received data
 String query;
 
 void setup() {
@@ -17,24 +14,22 @@ void setup() {
   // Check if we're "connected" to the temperature sensor
   if ( !temperature.begin() ) {
     while( true ){
-        // Blink LED in unique way to try and ease HW debug...
-        // Two quick blinks (in 1 second), followed by pause with LED off.
-        digitalWrite(LED_BUILTIN, HIGH);  
-        delay(250);                       
-        digitalWrite(LED_BUILTIN, LOW);    
-        delay(250); 
-        digitalWrite(LED_BUILTIN, HIGH);  
-        delay(250);
-        digitalWrite(LED_BUILTIN, LOW);    
-        delay(250); 
-        delay(1000);
+      // Blink LED in unique way to try and ease HW debug...
+      // Two quick blinks (in 1 second), followed by pause with LED off.
+      digitalWrite(LED_BUILTIN, HIGH);  
+      delay(250);                       
+      digitalWrite(LED_BUILTIN, LOW);    
+      delay(250); 
+      digitalWrite(LED_BUILTIN, HIGH);  
+      delay(250);
+      digitalWrite(LED_BUILTIN, LOW);    
+      delay(250); 
+      delay(1000);
     }
   }
 }
 
 void loop() {
-
-//  Serial.print("Wait for command...");
   while ( !Serial.available() );
   query = Serial.readStringUntil('\n');
 

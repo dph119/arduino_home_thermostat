@@ -1,48 +1,61 @@
-#include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 
-#define TIMEOUT 5000 // mS
+const bool debug = false;
 
-ESP8266WiFiMulti WiFiMulti;
-
-IPAddress    apIP(43, 43, 43, 43);  // Defining a static IP address: local & gateway
-                                    // Default IP in AP mode is 192.168.4.1
-
+// --- I/O Parameters
 const byte numChars = 8;
-char received_temp_char_buffer[numChars]; // an array to store the received data
-String received_temp;
+char data_buffer[numChars]; // an array to store the received data
+String response;
+const int timeout = 5000; // mS
 
+// --- WiFi Parameters
 const char *ssid = "ESP8266";
 const char *password = "ESP8266Test";
-
-// Define a web server at port 80 for HTTP
+IPAddress    apIP(43, 43, 43, 43);  // Defining a static IP address: local & gateway
+                                    // Default IP in AP mode is 192.168.4.1
+ESP8266WiFiMulti WiFiMulti;
 ESP8266WebServer server(80);
+
+void send_request(String command) {
+  while ( Serial.available() ) Serial.read();
+  Serial.print(command);
+  Serial.print('\n');
+  Serial.flush();  
+}
+
+String get_response() {
+  String response;
+  
+  long deadline = millis() + timeout;
+  while (!Serial.available() && millis() < deadline);
+  // In-case we timeout, use some bogus value so we don't hang
+  // It's up to the client to handle this garbage
+  if (millis() < deadline) 
+    response = Serial.readStringUntil('\n');
+  else response = "-1";
+
+  return response;
+}
+
+void serve_simple_page(String data) {
+  // construct our reply and send it out
+  char html[1000];
+  data.toCharArray(data_buffer, numChars);
+  
+  snprintf(html, 1000, "%d", atoi( data_buffer));
+  server.send(200, "text/html", html);    
+}
 
 void handleRoot() {
   digitalWrite (LED_BUILTIN, 0); //turn the built in LED on 
 
-  // query the board for the temperature
-  while ( Serial.available() ) Serial.read();
-  Serial.print("temp?");
-  Serial.print('\n');
-  Serial.flush();
-  long deadline = millis() + TIMEOUT;
-  while ( !Serial.available() && millis() < deadline );
-  // In-case we timeout, use some bogus value so we don't hang
-  // It's up to the client to handle this garbage
-  if (millis() < deadline) 
-    received_temp = Serial.readStringUntil('\n');
-  else received_temp = "-1";
-  
-  // construct our reply and send it out
-  char html[1000];
-  received_temp.toCharArray( received_temp_char_buffer, numChars );
-  
-  snprintf ( html, 1000, "%d", atoi( received_temp_char_buffer ) );
-  server.send ( 200, "text/html", html );
+  send_request("temp?");
+  response = get_response();
+  serve_simple_page(response);
+
   digitalWrite ( LED_BUILTIN, 1 );
 }
 
@@ -66,27 +79,29 @@ void handleNotFound() {
 }
 
 void setup() {    
-    Serial.begin(115200);
+  Serial.begin(115200);
 
+  if (debug) {
     for(uint8_t t = 4; t > 0; t--) {
         Serial.printf("[SETUP] WAIT %d...\n", t);
         Serial.flush();
         delay(1000);
     }
-
     Serial.printf("[SETUP] Setting mode...\n");
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));   // subnet FF FF FF 00  
-  
-    Serial.printf("[SETUP] Adding access point...\n");
+  }
+    
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));   // subnet FF FF FF 00  
 
-    WiFiMulti.addAP(ssid, password);
+  if (debug) Serial.printf("[SETUP] Adding access point...\n");
 
-    server.on ( "/", handleRoot );
-    server.onNotFound ( handleNotFound );
-  
-    server.begin();
-    Serial.printf("[SETUP] Done!\n");
+  WiFiMulti.addAP(ssid, password);
+
+  server.on ( "/", handleRoot );
+  server.onNotFound ( handleNotFound );
+
+  server.begin();
+  if (debug) Serial.printf("[SETUP] Done!\n");
 }
 
 void loop() {
