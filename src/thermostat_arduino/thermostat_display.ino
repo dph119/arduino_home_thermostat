@@ -3,6 +3,9 @@
 #include "common.h"
 #include "thermostat_display.h"
 
+const unsigned display_timeout = 5000; // mS
+long time_of_action;
+
 SoftwareSerial hostSerial(6, 7); // RX, TX
 
 // select the pins used on the LCD panel
@@ -25,6 +28,7 @@ bool state_change;
 
 int current_menu;
 typedef enum MenuState {
+  off,
   main_menu,
   modify_thermostat_temperature,
   modify_desired_temperature,
@@ -64,6 +68,7 @@ int get_button_press() {
       if ( !button_pressed && consecutive_times_pressed > 5 ) {
         button_pressed = true;
         button_val = val;
+        time_of_action = millis();
       }
     } else if ( val == btnNONE && !button_pressed )
       consecutive_times_pressed = 0;
@@ -80,7 +85,7 @@ int get_button_press() {
       consecutive_times_nothing = 0;
     
   } while ( !(button_pressed && button_released) && consecutive_times_nothing < 5 ); 
-
+ 
   return button_val;
 }
 
@@ -94,6 +99,7 @@ void setup_display() {
 
   lcd.begin(16, 2);
   lcd.clear();
+  time_of_action = millis();
   delay(500);  
 }
 
@@ -174,12 +180,31 @@ void handle_set_thermostat() {
   }
 }
 
+void handle_off_display() {
+  if ( state_change ) {
+    lcd.clear();
+    state_change = false;
+  }
+
+  lcd_key = get_button_press();
+  if (lcd_key != btnNONE) {
+    state_change = true;
+    current_menu = main_menu;
+  }
+}
+
 void handle_display() {
   switch( current_menu ) {
     case main_menu: handle_main_menu(); break;
     case modify_desired_temperature: handle_set_desired_temperature(); break;
     case modify_thermostat_temperature: handle_set_thermostat(); break;
+    case off: handle_off_display(); break;
   };
 
+  if ( ( millis() - time_of_action ) > display_timeout ) {
+    state_change = true;
+    current_menu = off;
+  }
+  
   // Check for any new data sent from the host Arduino
 }
