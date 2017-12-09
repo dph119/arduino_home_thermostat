@@ -1,6 +1,8 @@
 #include <SoftwareSerial.h>
 #include <math.h>
 #include <Stepper.h>
+#include "thermostat_arduino.h"
+#include "thermostat_display.h"
 
 const bool debug = false;
 bool enabled;
@@ -16,29 +18,23 @@ bool warmer_rotate_dir_ccw;
 // Thermostat range is 40-90
 // Gives us 90-40 / 1.5 = 50/1.5 = 33.3 available steps
 // Only doing full steps here, so we can round up in practice
-const unsigned rotate_dir_pin = 2;
-const unsigned coil_a_enable_pin = 7;
-const unsigned coil_b_enable_pin = 6;
+const unsigned rotate_dir_pin = 1;
+const unsigned coil_a_enable_pin = 16;
+const unsigned coil_b_enable_pin = 17;
 const unsigned max_temp_f = 90;
 const unsigned min_temp_f = 40;
 const float num_step_per_degree = 2;
 const unsigned num_available_steps = (unsigned)ceil((max_temp_f - min_temp_f) / num_step_per_degree);
 const int steps_per_revolution = 200;  
-unsigned current_thermostat_temperature;
-unsigned current_temperature;
+
 unsigned requested_temperature;
 const unsigned init_reset_temp = 65;
 const unsigned min_step_delta = 5;
 
-SoftwareSerial stepperSerial(6, 7); // RX, TX
-Stepper myStepper(steps_per_revolution, 8, 9, 10, 11);
+Stepper myStepper(steps_per_revolution, 2, 3, 11, 12);
 
 // --- ESP Parameters
-const unsigned enable_esp_pin = 3;
-SoftwareSerial espSerial(12, 13); // RX, TX
-// BOZO: I originally put this in because I thought there was something wrong with SoftwareSerial
-// but it turned out to be some other issue. I'll leave this in for now.
-const bool use_esp_sw_serial = false;
+SoftwareSerial espSerial(6, 7); // RX, TX
 long time_of_last_query;
 // BOZO: Consider making this adjustable 
 const double query_interval = 90000; // mS
@@ -49,14 +45,7 @@ int temperature_history[num_temperatures_to_keep];
 unsigned current_temperature_index;
 unsigned temperature_running_average;
 
-// --- I/O Parameters
-const unsigned timeout = 1000; // mS
-const byte numChars = 8;
-char query_char_buffer[numChars]; // an array to store the received data
-String query;
-
 // --- Thermostat Parameters
-unsigned desired_temperature;
 long time_of_last_adjustment; 
 const double default_adjustment_interval = 1800000; // mS
 // BOZO: Consider making this adjustable 
@@ -66,23 +55,24 @@ double adjustment_interval;
 const unsigned temperature_window = 2;
 bool made_cooler_on_last_adjustment;
 
+// --- Display parameters
+SoftwareSerial dispSerial(4, 5); // RX, TX
+
+typedef enum SerialConnections {
+  hw,
+  esp,
+  disp
+};
+
 void setup() {
   delay(1000);
   Serial.begin(115200);
-  stepperSerial.begin(115200);
-  if (use_esp_sw_serial) espSerial.begin(115200);
   myStepper.setSpeed(10);
 
  // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(rotate_dir_pin, INPUT);
-  
-  pinMode(coil_a_enable_pin, OUTPUT);
-  pinMode(coil_b_enable_pin, OUTPUT);
-  pinMode(enable_esp_pin, OUTPUT);
 
   enabled = true;
-  enable_esp();
   reset_thermostat(false);
   set_thermostat(init_reset_temp, false);
 
@@ -95,12 +85,17 @@ void setup() {
   adjustment_interval = default_adjustment_interval;
   made_cooler_on_last_adjustment = false;
   
-  desired_temperature = init_reset_temp;
+  current_desired_temperature = init_reset_temp;
   current_temperature_index = 0;
   memset(temperature_history, -1, sizeof(temperature_history));
   query = "";
   time_of_last_query = millis();
   time_of_last_adjustment = millis();
+
+  current_temperature = get_temperature();
+
+  setup_display();
+  
   if (debug) Serial.print("[SETUP] Setup complete!\n");
 }
 
@@ -136,9 +131,9 @@ void regulate() {
     // The big concern is if we no longer get valid temperatures, then
     // we better leave everything alone.
     if ( num_valid_temperature >= num_temperatures_to_keep ) {
-       unsigned temperature_delta = abs(temperature_running_average - desired_temperature);
+       unsigned temperature_delta = abs(temperature_running_average - current_desired_temperature);
        if (temperature_delta > temperature_window) {
-          if (temperature_running_average > desired_temperature) {
+          if (temperature_running_average > current_desired_temperature) {
             // Make COLDER
             // Only do so if last adjustment was to make everything warmer.
             // The thermostat only triggers heat. It's possible we've reached an ambient
@@ -164,15 +159,16 @@ void regulate() {
 }
 
 void loop() {
-  bool from_esp = false;
+  handle_display();
+  int serial_source = hw;
   
-  if ( !use_esp_sw_serial && Serial.available() )
+  if ( Serial.available() ) {
       query = Serial.readStringUntil('\n');
-  else if ( use_esp_sw_serial && espSerial.available() ) {
-      query = espSerial.readStringUntil('\n');
-      from_esp = true;
+      serial_source = esp;
+  } else if ( dispSerial.available() ) {
+      serial_source = disp;
   }
-  
+
   if ((millis() - time_of_last_query) > query_interval) {
     if (debug) Serial.println("[AUTO] Getting temperature...");
     current_temperature = get_temperature();
@@ -191,24 +187,34 @@ void loop() {
 
   if ( query != "") {
     if ( query == "temp?" ) {
-      send_esp_ack();
+      send_ack( serial_source );
       
       if (debug) Serial.println("[CMD] Getting temperature...");
       current_temperature = get_temperature();
+
+      if ( serial_source == disp ) {
+        dispSerial.print(current_temperature, DEC);
+        dispSerial.print('\n');
+      }
+      
+      if ( serial_source == hw ) {
+        Serial.print(current_temperature, DEC);
+        Serial.print('\n');
+      }
       
       if (debug) Serial.print("[CMD] Received temperature: ");
       if (debug) Serial.println(current_temperature, DEC);
     } else if (query == "dtemp?") {
-      send_esp_ack();
-      send_to_esp(desired_temperature);
+      send_ack( serial_source );
+      send_to_esp(current_desired_temperature);
     } else if (query == "enabled?") {
-      send_esp_ack();
+      send_ack( serial_source );
       send_to_esp(enabled);    
     } else if (query == "therm?") {
-      send_esp_ack();
+      send_ack( serial_source );
       send_to_esp(current_thermostat_temperature);
     } else if ( query == "rtherm!" ) {
-      send_esp_ack();
+      send_ack( serial_source );
       
       if (debug) Serial.println("[CMD] Resetting thermostat...");
       if (enabled) reset_thermostat(false);
@@ -217,38 +223,38 @@ void loop() {
       
       if (debug) Serial.println("[CMD] Done resetting thermostat!");
     } else if ( query == "sdtemp!" ) {
-      send_esp_ack();
+      send_ack( serial_source );
       
       if (debug) Serial.println("[CMD] Setting desired temperature...");
-      
-      if (use_esp_sw_serial) {
-        while ( !espSerial.available() );
-        int value = espSerial.readStringUntil('\n').toInt();
-        send_esp_ack();
+
+      if ( serial_source == esp ) {
+        while ( !Serial.available() );
+        int value = Serial.readStringUntil('\n').toInt();
+        send_ack( serial_source );
         
         // Ignore values of -1. Just return the current value.
         // This is an underhanded way of querying for the current value.
-        desired_temperature = value > 0 ? value : desired_temperature;
+        current_desired_temperature = value > 0 ? value : current_desired_temperature;
       } 
       else {
         while ( !Serial.available() );
-        send_esp_ack();
-        desired_temperature = Serial.readStringUntil('\n').toInt();
+        send_ack( serial_source );
+        current_desired_temperature = Serial.readStringUntil('\n').toInt();
       }
 
-      send_to_esp(desired_temperature);
+      if ( serial_source == esp ) send_to_esp(current_desired_temperature);
       
       if (debug) Serial.println("[CMD] Done setting desired temperature!");
       
     } else if ( query == "stherm!" ) {
-      send_esp_ack();
+      send_ack( serial_source );
       
       if (debug) Serial.println("[CMD] Waiting for requested temperature to be specified...");
-      
-      if (use_esp_sw_serial) {
-        while ( !espSerial.available() );
-        int value = espSerial.readStringUntil('\n').toInt();
-        send_esp_ack();
+
+      if ( serial_source == esp ) {
+        while ( !Serial.available() );
+        int value = Serial.readStringUntil('\n').toInt();
+        send_ack( serial_source );
         
         // Ignore values of -1. Just return the current value.
         // This is an underhanded way of querying for the current value.
@@ -258,76 +264,83 @@ void loop() {
       else {
         while ( !Serial.available() );
         requested_temperature = Serial.readStringUntil('\n').toInt();
-        send_esp_ack();
+        send_ack( serial_source );
         if (enabled) set_thermostat(requested_temperature, true);
       }
 
-      send_to_esp(current_thermostat_temperature);
+      if ( serial_source == esp ) send_to_esp(current_thermostat_temperature);
 
       if (debug) Serial.println("[CMD] Done setting thermostat!");
     } 
     else if (query == "enable!") {
-      send_esp_ack();
+      send_ack( serial_source );
       enabled = true;
-      send_to_esp(enabled);
+      if ( serial_source == esp ) {
+        send_to_esp(enabled);
+      }
     }
     else if (query == "disable!") {
-      send_esp_ack();
+      send_ack( serial_source );
       enabled = false;
-      send_to_esp(enabled);
+      if ( serial_source == esp ) {
+        send_to_esp(enabled);
+      }
     }
     else {
       if (debug) {
         Serial.print("[CMD] Unknown command: ");
         Serial.println(query);
       }
-      send_esp_nack();
+      send_nack( serial_source );
     }
     query = "";
   } 
 }
 
 void send_to_esp(int value) {
-  if (use_esp_sw_serial) {
-    espSerial.print(value, DEC);  
-    espSerial.print('\n');
-    espSerial.flush();
-  }
-  else {
-    Serial.print(value, DEC);
-    Serial.print('\n');
-    Serial.flush();
+  Serial.print(value, DEC);
+  Serial.print('\n');
+  Serial.flush();
+}
+
+void send_ack( int connection ) {
+  if ( connection == esp ) {
+    send_esp_ack();
+  } else if ( connection == disp ) {
+    send_disp_ack();
   }
 }
 
 void send_esp_ack() {
-  if (use_esp_sw_serial) {
-    espSerial.print("a");
-    espSerial.print('\n');
-    espSerial.flush();
-  }
-  else {
-    Serial.print("a");
-    Serial.print('\n');
-    Serial.flush();  
+  Serial.print("a");
+  Serial.print('\n');
+  Serial.flush();  
+}
+
+void send_disp_ack() {
+  dispSerial.print("a");
+  dispSerial.print('\n');
+  dispSerial.flush();
+}
+
+void send_nack( int connection ) {
+  if ( connection == esp ) {
+    send_esp_nack();
+  } else if ( connection == disp ) {
+    send_disp_nack();
   }
 }
 
 void send_esp_nack() {
-  if (use_esp_sw_serial) {
-    espSerial.print("n");
-    espSerial.print('\n');
-    espSerial.flush();
-  }
-  else {
-    Serial.print("n");
-    Serial.print('\n');
-    Serial.flush();    
-  }
+  Serial.print("n");
+  Serial.print('\n');
+  Serial.flush();    
 }
 
-void enable_esp() {
-  digitalWrite(enable_esp_pin, HIGH);
+void send_disp_nack() {
+  dispSerial.print("n");
+  dispSerial.print('\n');
+  dispSerial.flush();
 }
 
 void enable_stepper_motor() {
@@ -349,7 +362,7 @@ void reset_thermostat(bool use_current_temp) {
   // For now, the quick-and-dirty solution is to rotate a "sure amount" that guarantees
   // we've truly reached the "end"
   // Later we can fine-tune it for the sake of saving time
-  warmer_rotate_dir_ccw = digitalRead(rotate_dir_pin);
+  warmer_rotate_dir_ccw = analogRead(rotate_dir_pin) > 512;
   enable_stepper_motor();
   int step_amount = use_current_temp ? degrees_to_steps(abs(current_thermostat_temperature - min_temp_f) * 1.5 ) : 4*num_available_steps;
   if (warmer_rotate_dir_ccw)
@@ -380,7 +393,7 @@ void set_thermostat( unsigned temperature, bool reset ) {
   bool raising_temperature = temperature > current_thermostat_temperature;
 
   int num_steps = degrees_to_steps(temperature_delta);
-  warmer_rotate_dir_ccw = digitalRead(rotate_dir_pin);
+  warmer_rotate_dir_ccw = analogRead(rotate_dir_pin) > 512;
 
   if (debug) {
       Serial.print("[DEBUG] Temperature delta: ");
@@ -422,31 +435,16 @@ int get_temperature() {
   String received_temp;
   long start_time = millis();
 
-  if (use_esp_sw_serial) {
-    espSerial.print("temp?");
-    espSerial.print('\n');
-    espSerial.flush();
+  Serial.print("temp?");
+  Serial.print('\n');
+  Serial.flush();  
 
-    while ( !espSerial.available() && (millis() - start_time) < timeout);
-    // In-case we timeout, use some bogus value so we don't hang
-    // It's up to the client to handle this garbage
-    if ((millis() - start_time) < timeout) 
-      received_temp = espSerial.readStringUntil('\n');
-    else received_temp = "-1";
-
-  } else {
-    Serial.print("temp?");
-    Serial.print('\n');
-    Serial.flush();  
-
-     while ( !Serial.available() && (millis() - start_time) < timeout);
-    // In-case we timeout, use some bogus value so we don't hang
-    // It's up to the client to handle this garbage
-    if ((millis() - start_time) < timeout) 
-      received_temp = Serial.readStringUntil('\n');
-    else received_temp = "-1";
-  }
-  
+   while ( !Serial.available() && (millis() - start_time) < timeout);
+  // In-case we timeout, use some bogus value so we don't hang
+  // It's up to the client to handle this garbage
+  if ((millis() - start_time) < timeout) 
+    received_temp = Serial.readStringUntil('\n');
+  else received_temp = "-1";
 
   return received_temp.toInt();
 }
